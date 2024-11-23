@@ -13,4 +13,4 @@ lazy_static = "1.5.0"
 uuid = { version = "1.11.0", features = ["fast-rng", "v4"] }
 downcast-rs = "1.2.1"
 dyn-clone = "1.0.17"
-asyncra_macros = {version = "*"}
+asyncra_macros = {version = "0.1.0"}
