@@ -1,0 +1,14 @@
+[package]
+name = "asyncra_macros"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Macros for asyncra runtime"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.92"
+quote = "1.0.37"
+syn = {version = "2.0.77", features = ["extra-traits", "printing", "full"]}
