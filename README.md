@@ -3,7 +3,7 @@
 
 # Here is Asyncra
 **Full unblocking async runtime**
-***
+
 
 # Example
 ```rust
@@ -30,14 +30,14 @@ async fn main() -> asyncra::Result<()> {
     Ok(())
 }
 ```
-***
+
 # Installation
 ```cargo add asyncra```
-***
+
 # TODO
 1. Fix data race.
 2. Add task and thread spawner
 3. ...
-***
+
 # License
 * [Apache-2.0](LICENSE)
