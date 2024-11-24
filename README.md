@@ -35,9 +35,8 @@ async fn main() -> asyncra::Result<()> {
 ```cargo add asyncra```
 ***
 # TODO
-1. Fix data race.
-2. Add task and thread spawner
-3. ...
+1. Add task and thread spawner
+2. Add join macros for launch parallel threads at the same time
 ***
 # License
 * [Apache-2.0](LICENSE)
