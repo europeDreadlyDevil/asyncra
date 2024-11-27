@@ -6,7 +6,6 @@
 
 # Example
 ```rust
-use tokio::join;
 use asyncra::SharedValue;
 
 #[asyncra::main]
