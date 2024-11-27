@@ -1,5 +1,5 @@
 ![Crates.io Version](https://img.shields.io/crates/v/asyncra?style=for-the-badge&label=asyncra)
-![Crates.io Downloads (latest version)](https://img.shields.io/crates/dv/asyncra?style=for-the-badge)
+![Crates.io Total Downloads](https://img.shields.io/crates/d/asyncra?style=for-the-badge)
 
 # Here is Asyncra
 **Full unblocking async runtime**
