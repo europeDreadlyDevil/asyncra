@@ -13,6 +13,18 @@ pub use asyncra_macros::main;
 pub use asyncra_macros::test;
 pub use asyncra_macros::bench;
 pub use criterion::{criterion_group, criterion_main, Criterion};
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use lazy_static::lazy_static;
+use tokio::join;
+use tokio::task::JoinHandle;
+
+lazy_static! {
+    static ref NODE_MANAGER_CHANNEL: (NodeSender<NodeManagerMessage>, NodeReceiver<NodeManagerMessage>) = {
+        let (tx, rx) = unbounded_channel();
+        (Arc::new(tx), Arc::new(Mutex::new(rx)))
+    };
+}
 
 #[macro_export] macro_rules! extract_benches {
     ($( $target:path ),+ $(,)*) => {
@@ -21,8 +33,8 @@ pub use criterion::{criterion_group, criterion_main, Criterion};
     };
 }
 
-pub type TaskSender<T> = Arc<UnboundedSender<T>>;
-pub type TaskReceiver<T> = Arc<Mutex<UnboundedReceiver<T>>>;
+pub type NodeSender<T> = Arc<UnboundedSender<T>>;
+pub type NodeReceiver<T> = Arc<Mutex<UnboundedReceiver<T>>>;
 pub type DataSender<T> = Sender<T>;
 pub type DataReceiver<T> = Receiver<T>;
 
@@ -53,7 +65,7 @@ where
     }
 }
 
-pub enum Message<T> {
+pub enum SharedValueMessage<T> {
     Write {
         data: T,
     },
@@ -63,12 +75,20 @@ pub enum Message<T> {
     Read{ tx: DataSender<T>},
     ReadLock { tx: DataSender<T> }
 }
+
+pub enum NodeManagerMessage {
+    Reg(JoinHandle<anyhow::Result<()>>),
+    Close
+}
+
 #[derive(Clone)]
 pub struct SharedValue {
-    sender: Arc<UnboundedSender<Message<Box<dyn CloneableAny>>>>,
+    sender: Arc<UnboundedSender<SharedValueMessage<Box<dyn CloneableAny>>>>,
+    #[allow(dead_code)]
     notify: Arc<Notify>,
 }
 
+#[allow(unused_assignments)]
 impl SharedValue {
     pub fn new<T: CloneableAny>(data: T) -> Self {
         let (tx, mut rx) = unbounded_channel();
@@ -86,18 +106,18 @@ impl SharedValue {
 
             while let Some(msg) = rx.recv().await {
                 match msg {
-                    Message::Write { data } => {
+                    SharedValueMessage::Write { data } => {
                         if !write_lock {
                             storage = Some(data);
                             notify.notify_waiters();
                         }
                     }
-                    Message::Read { tx } => {
+                    SharedValueMessage::Read { tx } => {
                         if let Some(ref value) = storage {
                             let _ = tx.send(value.clone());
                         }
                     }
-                    Message::WriteLock { data } => {
+                    SharedValueMessage::WriteLock { data } => {
                         while write_lock || read_locks > 0 {
                             notify.notified().await;
                         }
@@ -106,7 +126,7 @@ impl SharedValue {
                         write_lock = false;
                         notify.notify_waiters();
                     }
-                    Message::ReadLock { tx } => {
+                    SharedValueMessage::ReadLock { tx } => {
                         while write_lock {
                             notify.notified().await;
                         }
@@ -126,19 +146,19 @@ impl SharedValue {
 
     pub async fn read<T: CloneableAny>(&self) -> T {
         let (tx, rx) = oneshot::channel();
-        self.sender.send(Message::Read { tx }).unwrap();
+        self.sender.send(SharedValueMessage::Read { tx }).unwrap();
         *rx.await.unwrap().downcast::<T>().unwrap()
     }
 
     pub async fn read_lock<T: CloneableAny>(&self) -> T {
         let (tx, rx) = oneshot::channel();
-        self.sender.send(Message::ReadLock { tx }).unwrap();
+        self.sender.send(SharedValueMessage::ReadLock { tx }).unwrap();
         *rx.await.unwrap().downcast::<T>().unwrap()
     }
 
     pub fn write<T: CloneableAny>(&self, data: T) {
         self.sender
-            .send(Message::Write {
+            .send(SharedValueMessage::Write {
                 data: Box::new(data),
             })
             .unwrap();
@@ -146,7 +166,7 @@ impl SharedValue {
 
     pub fn write_lock<T: CloneableAny>(&self, data: T) {
         self.sender
-            .send(Message::WriteLock {
+            .send(SharedValueMessage::WriteLock {
                 data: Box::new(data),
             })
             .unwrap();
@@ -157,12 +177,40 @@ pub fn wake_runtime<
     M: Future<Output = Result<()>> + Sized,
 >(
     fabric: fn() -> M,
-    //event_loop: fn() -> E,
 ) -> anyhow::Result<()> {
     let rt = Builder::new_multi_thread()
         .worker_threads(num_cpus::get())
         .enable_all()
         .build()?;
-    rt.block_on(fabric())?;
+    rt.block_on(async move {
+        let node_manager = tokio::spawn(async move {
+            let mut nodes = FuturesUnordered::new();
+            loop {
+                if let Some(msg) = NODE_MANAGER_CHANNEL.clone().1.lock().await.recv().await {
+                    match msg {
+                        NodeManagerMessage::Reg(node) => {
+                            nodes.push(node);
+                        }
+                        NodeManagerMessage::Close => {
+                            while let Some(_node) = nodes.next().await {}
+                            return ();
+                        }
+                    }
+                }
+            }
+        });
+        let handle = async move {
+            let res = fabric().await;
+            let _ = NODE_MANAGER_CHANNEL.clone().0.send(NodeManagerMessage::Close);
+            res
+        };
+        let res = join!(handle, node_manager);
+        res.0
+    })?;
+    Ok(())
+}
+
+pub fn spawn_node<F: Future<Output=anyhow::Result<()>> + Send + Sync + 'static>(fabric: F) -> anyhow::Result<()> {
+    NODE_MANAGER_CHANNEL.clone().0.send(NodeManagerMessage::Reg(tokio::task::spawn(fabric)))?;
     Ok(())
 }
